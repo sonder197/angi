@@ -1681,38 +1681,43 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/* Lưu quán do người dùng tự thêm vào localStorage của trình duyệt,
-   tách riêng khỏi dữ liệu gốc PLACES nên không đụng vào file gốc. */
-const CUSTOM_KEY = 'anGiHomNay_customPlaces_v1';
+/* Lưu quán do người dùng tự thêm vào Firebase Realtime Database (dùng chung
+   cho mọi máy/trình duyệt truy cập trang này), tách riêng khỏi PLACES gốc. */
+const FIREBASE_URL = 'https://hom-nay-an-gi-9eeed-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-function loadCustom() {
+async function fetchCustomPool(key) {
   try {
-    const raw = localStorage.getItem(CUSTOM_KEY);
-    return raw ? JSON.parse(raw) : { casual: [], dinner: [], coffee: [] };
+    const res = await fetch(FIREBASE_URL + '/customPlaces/' + key + '.json');
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data) return [];
+    return Object.values(data);
   } catch (e) {
-    return { casual: [], dinner: [], coffee: [] };
+    return [];
   }
 }
 
-function saveCustom(data) {
+async function getPool(key) {
+  const custom = await fetchCustomPool(key);
+  return PLACES[key].concat(custom);
+}
+
+async function addPlace(targetPool, name) {
   try {
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(data));
-    return true;
+    const res = await fetch(FIREBASE_URL + '/customPlaces/' + targetPool + '.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, tag: 'Mới thêm' })
+    });
+    return res.ok;
   } catch (e) {
     return false;
   }
 }
 
-function getPool(key) {
-  const custom = loadCustom();
-  return PLACES[key].concat(custom[key] || []);
-}
-
-function addPlace(targetPool, name) {
-  const custom = loadCustom();
-  if (!custom[targetPool]) custom[targetPool] = [];
-  custom[targetPool].push({ name: name, tag: 'Mới thêm' });
-  return saveCustom(custom);
+function renderLoading(msg) {
+  progressEl.innerHTML = '';
+  stage.innerHTML = `<div class="card"><p class="question">${msg}</p></div>`;
 }
 
 /* Không lưu mật khẩu dạng chữ thường trong code — chỉ lưu bản băm SHA-256.
@@ -1756,9 +1761,10 @@ function renderStart() {
     state.totalSteps = 3;
     renderBudget();
   };
-  document.getElementById('btn-uong').onclick = () => {
+  document.getElementById('btn-uong').onclick = async () => {
     state.totalSteps = 2;
-    state.pool = getPool('coffee');
+    renderLoading('Đang tải danh sách...');
+    state.pool = await getPool('coffee');
     renderStyle(1);
   };
   document.getElementById('btn-add').onclick = () => {
@@ -1776,12 +1782,14 @@ function renderBudget() {
         <button class="option-btn" id="btn-sang"><span class="emoji">🍽️</span>Nhà hàng</button>
       </div>
     </div>`;
-  document.getElementById('btn-re').onclick = () => {
-    state.pool = getPool('casual');
+  document.getElementById('btn-re').onclick = async () => {
+    renderLoading('Đang tải danh sách...');
+    state.pool = await getPool('casual');
     renderStyle(2);
   };
-  document.getElementById('btn-sang').onclick = () => {
-    state.pool = getPool('dinner');
+  document.getElementById('btn-sang').onclick = async () => {
+    renderLoading('Đang tải danh sách...');
+    state.pool = await getPool('dinner');
     renderStyle(2);
   };
 }
@@ -1860,17 +1868,34 @@ function renderAddNameInput(targetPool) {
       <button class="btn-ghost" id="add-back" style="width:100%; margin-top:10px;">← Quay lại</button>
     </div>`;
   const input = document.getElementById('add-name-input');
-  const doSave = () => {
+  const doSave = async () => {
     const name = input.value.trim();
     if (!name) { input.focus(); return; }
-    addPlace(targetPool, name);
-    renderAddConfirm(name);
+    renderLoading('Đang lưu...');
+    const ok = await addPlace(targetPool, name);
+    if (ok) {
+      renderAddConfirm(name);
+    } else {
+      renderAddSaveError(targetPool, name);
+    }
   };
   document.getElementById('add-save').onclick = doSave;
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
   document.getElementById('add-back').onclick = () => {
     if (targetPool === 'coffee') renderAddCategory(); else renderAddBudget();
   };
+}
+
+function renderAddSaveError(targetPool, name) {
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Lưu không thành công</p>
+      <p class="tagline" style="margin-bottom:14px;">Có thể do mất mạng, thử lại nhé.</p>
+      <button class="option-btn" id="retry-save" style="width:100%;">🔁 Thử lại</button>
+      <button class="btn-ghost" id="retry-home" style="width:100%; margin-top:10px;">🏠 Về trang chủ</button>
+    </div>`;
+  document.getElementById('retry-save').onclick = () => renderAddNameInput(targetPool);
+  document.getElementById('retry-home').onclick = () => renderStart();
 }
 
 function renderAddConfirm(name) {
@@ -1880,7 +1905,7 @@ function renderAddConfirm(name) {
         <p class="ticket-title">Đã lưu vào danh sách</p>
         <hr class="ticket-divider">
         <p class="ticket-name">${name}</p>
-        <p class="ticket-note">Lần random sau có thể ra quán này. Dữ liệu lưu trên trình duyệt này thôi nhé.</p>
+        <p class="ticket-note">Đã lưu chung, máy nào mở trang này cũng random ra được.</p>
         <a class="ticket-link" href="${mapSearchUrl(name)}" target="_blank" rel="noopener">Xem trên Google Maps →</a>
       </div>
     </div>
