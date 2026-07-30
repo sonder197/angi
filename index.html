@@ -120,6 +120,24 @@
   }
   .option-btn .emoji { margin-right: 8px; }
 
+  .text-input {
+    display: block;
+    width: 100%;
+    font-family: 'Be Vietnam Pro', sans-serif;
+    font-size: 16px;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    box-sizing: border-box;
+  }
+  .text-input::placeholder { color: var(--ink-soft); opacity: 0.7; }
+  .text-input:focus-visible {
+    outline: 3px solid var(--turmeric);
+    outline-offset: 1px;
+  }
+
   /* Ticket / receipt reveal */
   .ticket-wrap { position: relative; padding: 16px 0 22px; }
   .ticket {
@@ -1663,6 +1681,55 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/* Lưu quán do người dùng tự thêm vào localStorage của trình duyệt,
+   tách riêng khỏi dữ liệu gốc PLACES nên không đụng vào file gốc. */
+const CUSTOM_KEY = 'anGiHomNay_customPlaces_v1';
+
+function loadCustom() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_KEY);
+    return raw ? JSON.parse(raw) : { casual: [], dinner: [], coffee: [] };
+  } catch (e) {
+    return { casual: [], dinner: [], coffee: [] };
+  }
+}
+
+function saveCustom(data) {
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(data));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function getPool(key) {
+  const custom = loadCustom();
+  return PLACES[key].concat(custom[key] || []);
+}
+
+function addPlace(targetPool, name) {
+  const custom = loadCustom();
+  if (!custom[targetPool]) custom[targetPool] = [];
+  custom[targetPool].push({ name: name, tag: 'Mới thêm' });
+  return saveCustom(custom);
+}
+
+/* Không lưu mật khẩu dạng chữ thường trong code — chỉ lưu bản băm SHA-256.
+   So khớp bằng cách băm chuỗi người dùng nhập rồi so với bản băm này. */
+const ADD_PASSWORD_HASH = '60b10cea37d99df873bd2b0357c3d67a32285a9e4f1af8ca2ba2af38e24fc514';
+
+async function checkPassword(value) {
+  try {
+    const enc = new TextEncoder().encode(value);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hex === ADD_PASSWORD_HASH;
+  } catch (e) {
+    return false;
+  }
+}
+
 function renderProgress(currentIndex, total) {
   progressEl.innerHTML = '';
   for (let i = 0; i < total; i++) {
@@ -1683,6 +1750,7 @@ function renderStart() {
         <button class="option-btn" id="btn-an"><span class="emoji">🍚</span>Ăn</button>
         <button class="option-btn" id="btn-uong"><span class="emoji">☕</span>Uống</button>
       </div>
+      <button class="btn-ghost" id="btn-add" style="width:100%; margin-top:14px;">➕ Thêm quán mới</button>
     </div>`;
   document.getElementById('btn-an').onclick = () => {
     state.totalSteps = 3;
@@ -1690,8 +1758,11 @@ function renderStart() {
   };
   document.getElementById('btn-uong').onclick = () => {
     state.totalSteps = 2;
-    state.pool = PLACES.coffee;
+    state.pool = getPool('coffee');
     renderStyle(1);
+  };
+  document.getElementById('btn-add').onclick = () => {
+    renderAddCategory();
   };
 }
 
@@ -1706,13 +1777,119 @@ function renderBudget() {
       </div>
     </div>`;
   document.getElementById('btn-re').onclick = () => {
-    state.pool = PLACES.casual;
+    state.pool = getPool('casual');
     renderStyle(2);
   };
   document.getElementById('btn-sang').onclick = () => {
-    state.pool = PLACES.dinner;
+    state.pool = getPool('dinner');
     renderStyle(2);
   };
+}
+
+function renderAddCategory() {
+  progressEl.innerHTML = '';
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Thêm quán ăn hay quán uống?</p>
+      <div class="options grid">
+        <button class="option-btn" id="add-an"><span class="emoji">🍚</span>Ăn</button>
+        <button class="option-btn" id="add-uong"><span class="emoji">☕</span>Uống</button>
+      </div>
+      <button class="btn-ghost" id="add-back" style="width:100%; margin-top:14px;">← Quay lại</button>
+    </div>`;
+  document.getElementById('add-an').onclick = () => renderAddBudget();
+  document.getElementById('add-uong').onclick = () => renderAddPassword('coffee');
+  document.getElementById('add-back').onclick = () => renderStart();
+}
+
+function renderAddBudget() {
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Thêm vào nhóm nào?</p>
+      <div class="options">
+        <button class="option-btn" id="add-re"><span class="emoji">🥢</span>Bình dân</button>
+        <button class="option-btn" id="add-sang"><span class="emoji">🍽️</span>Nhà hàng</button>
+      </div>
+      <button class="btn-ghost" id="add-back" style="width:100%; margin-top:14px;">← Quay lại</button>
+    </div>`;
+  document.getElementById('add-re').onclick = () => renderAddPassword('casual');
+  document.getElementById('add-sang').onclick = () => renderAddPassword('dinner');
+  document.getElementById('add-back').onclick = () => renderAddCategory();
+}
+
+function renderAddPassword(targetPool) {
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Nhập mật khẩu để thêm quán</p>
+      <input type="password" id="add-pw-input" class="text-input" placeholder="Mật khẩu" autofocus>
+      <button class="option-btn" id="add-pw-submit" style="width:100%; margin-top:14px;">Xác nhận</button>
+      <button class="btn-ghost" id="add-back" style="width:100%; margin-top:10px;">← Quay lại</button>
+    </div>`;
+  const input = document.getElementById('add-pw-input');
+  const doSubmit = async () => {
+    const ok = await checkPassword(input.value);
+    if (ok) {
+      renderAddNameInput(targetPool);
+    } else {
+      renderAddDenied();
+    }
+  };
+  document.getElementById('add-pw-submit').onclick = doSubmit;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSubmit(); });
+  document.getElementById('add-back').onclick = () => {
+    if (targetPool === 'coffee') renderAddCategory(); else renderAddBudget();
+  };
+}
+
+function renderAddDenied() {
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Không được thêm quán</p>
+      <button class="option-btn" id="denied-home" style="width:100%; margin-top:14px;">🏠 Về trang chủ</button>
+    </div>`;
+  document.getElementById('denied-home').onclick = () => renderStart();
+}
+
+function renderAddNameInput(targetPool) {
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Tên quán là gì?</p>
+      <p class="tagline" style="margin-bottom:14px;">Ghi giống tên trên Google Maps để dễ tìm lại</p>
+      <input type="text" id="add-name-input" class="text-input" placeholder="Ví dụ: Phở Thìn Bờ Hồ" autofocus>
+      <button class="option-btn" id="add-save" style="width:100%; margin-top:14px;">💾 Lưu quán</button>
+      <button class="btn-ghost" id="add-back" style="width:100%; margin-top:10px;">← Quay lại</button>
+    </div>`;
+  const input = document.getElementById('add-name-input');
+  const doSave = () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    addPlace(targetPool, name);
+    renderAddConfirm(name);
+  };
+  document.getElementById('add-save').onclick = doSave;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
+  document.getElementById('add-back').onclick = () => {
+    if (targetPool === 'coffee') renderAddCategory(); else renderAddBudget();
+  };
+}
+
+function renderAddConfirm(name) {
+  stage.innerHTML = `
+    <div class="ticket-wrap">
+      <div class="ticket">
+        <p class="ticket-title">Đã lưu vào danh sách</p>
+        <hr class="ticket-divider">
+        <p class="ticket-name">${name}</p>
+        <p class="ticket-note">Lần random sau có thể ra quán này. Dữ liệu lưu trên trình duyệt này thôi nhé.</p>
+        <a class="ticket-link" href="${mapSearchUrl(name)}" target="_blank" rel="noopener">Xem trên Google Maps →</a>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn-ghost" id="add-more">➕ Thêm quán khác</button>
+      <button class="btn-ghost" id="add-home">🏠 Về trang chủ</button>
+    </div>`;
+  document.getElementById('add-more').onclick = () => renderAddCategory();
+  document.getElementById('add-home').onclick = () => renderStart();
 }
 
 function renderStyle(stepIndex) {
