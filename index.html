@@ -138,6 +138,35 @@
     outline-offset: 1px;
   }
 
+  .browse-list {
+    max-height: 55vh;
+    overflow-y: auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  .browse-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 14px;
+    text-decoration: none;
+    color: var(--ink);
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .browse-row:last-child { border-bottom: none; }
+  .browse-row:hover { background: rgba(64,28,46,0.05); }
+  .browse-name { font-weight: 500; }
+  .browse-tag {
+    font-size: 11px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: 10px;
+  }
+
   /* Ticket / receipt reveal */
   .ticket-wrap { position: relative; padding: 16px 0 22px; }
   .ticket {
@@ -1677,8 +1706,35 @@ function uniqueTags(pool) {
   return [...new Set(pool.map(p => p.tag))];
 }
 
-function pickRandom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+/* Random kiểu "rút bài không lặp" — xáo cả danh sách 1 lần, rút lần lượt,
+   chỉ xáo lại khi đã rút hết, và tránh lặp ngay item vừa hiện trước đó.
+   Nhờ vậy không còn bị ra trùng liên tục như random độc lập từng lần. */
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function startQueue(pool) {
+  state.shuffledQueue = shuffle(pool);
+  state.queueIndex = 0;
+  return state.shuffledQueue[0];
+}
+
+function advanceQueue() {
+  state.queueIndex++;
+  if (!state.shuffledQueue || state.queueIndex >= state.shuffledQueue.length) {
+    let reshuffled = shuffle(state.filteredPool);
+    if (reshuffled.length > 1 && state.chosen && reshuffled[0].name === state.chosen.name) {
+      [reshuffled[0], reshuffled[1]] = [reshuffled[1], reshuffled[0]];
+    }
+    state.shuffledQueue = reshuffled;
+    state.queueIndex = 0;
+  }
+  return state.shuffledQueue[state.queueIndex];
 }
 
 /* Lưu quán do người dùng tự thêm vào Firebase Realtime Database (dùng chung
@@ -1920,29 +1976,55 @@ function renderAddConfirm(name) {
 function renderStyle(stepIndex) {
   renderProgress(stepIndex, state.totalSteps);
   const tags = uniqueTags(state.pool);
-  const buttons = tags.map(t =>
+  const hasNew = tags.includes('Mới thêm');
+  const restTags = tags.filter(t => t !== 'Mới thêm');
+  const newButton = hasNew ? `<button class="option-btn" data-tag="Mới thêm"><span class="emoji">✨</span>Mới thêm</button>` : '';
+  const restButtons = restTags.map(t =>
     `<button class="option-btn" data-tag="${t}">${t}</button>`
   ).join('');
   stage.innerHTML = `
     <div class="card">
       <p class="question">Muốn kiểu gì?</p>
       <div class="options">
-        ${buttons}
         <button class="option-btn" data-tag="__any__"><span class="emoji">🎯</span>Bất kỳ</button>
+        ${newButton}
+        <button class="option-btn" data-tag="__all__"><span class="emoji">📋</span>Tất cả các quán</button>
+        ${restButtons}
       </div>
     </div>`;
   stage.querySelectorAll('.option-btn').forEach(btn => {
     btn.onclick = () => {
       const tag = btn.dataset.tag;
+      if (tag === '__all__') {
+        renderAllList(stepIndex);
+        return;
+      }
       state.filterTag = tag === '__any__' ? null : tag;
       const filtered = state.filterTag
         ? state.pool.filter(p => p.tag === state.filterTag)
         : state.pool;
       state.filteredPool = filtered.length ? filtered : state.pool;
-      state.chosen = pickRandom(state.filteredPool);
+      state.chosen = startQueue(state.filteredPool);
       renderResult(stepIndex + 1);
     };
   });
+}
+
+function renderAllList(stepIndex) {
+  renderProgress(stepIndex, state.totalSteps);
+  const rows = state.pool.map(p =>
+    `<a class="browse-row" href="${mapSearchUrl(p.name)}" target="_blank" rel="noopener">
+       <span class="browse-name">${p.name}</span>
+       <span class="browse-tag">${p.tag}</span>
+     </a>`
+  ).join('');
+  stage.innerHTML = `
+    <div class="card">
+      <p class="question">Tất cả các quán</p>
+      <div class="browse-list">${rows}</div>
+      <button class="btn-ghost" id="browse-back" style="width:100%; margin-top:14px;">← Quay lại</button>
+    </div>`;
+  document.getElementById('browse-back').onclick = () => renderStyle(stepIndex);
 }
 
 function renderResult(stepIndex) {
@@ -1966,7 +2048,7 @@ function renderResult(stepIndex) {
       <button class="btn-ghost" id="btn-restart">↺ Bắt đầu lại</button>
     </div>`;
   document.getElementById('btn-reroll').onclick = () => {
-    state.chosen = pickRandom(state.filteredPool);
+    state.chosen = advanceQueue();
     renderResult(stepIndex);
   };
   document.getElementById('btn-restart').onclick = () => {
